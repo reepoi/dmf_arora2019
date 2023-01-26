@@ -216,11 +216,11 @@ class ProblemBroker:
         self.vbt = self.vbt
         self.technique = technique
         self.mask = mask
-        if self.mask is None:
-            self.mask = vf_model.get_bit_mask(self.problem_shape(), self.mask_rate)
+        self.grid_density = grid_density
         self.mask_rate = mask_rate
         self.num_factors = num_factors
-        self.grid_density = grid_density
+        if self.mask is None:
+            self.mask = vf_model.get_bit_mask(self.problem_shape(), self.mask_rate)
 
     def problem_shape(self):
         if self.technique is not enums.Technique.INTERPOLATED:
