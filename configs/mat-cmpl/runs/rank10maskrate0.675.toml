@@ -1,0 +1,4 @@
+problem = "matrix-completion"
+obs_path = "datasets/mat-cmpl/rank10maskrate0.675.pt"
+gt_path = "datasets/mat-cmpl/rank10.pt"
+shape = [100, 100]

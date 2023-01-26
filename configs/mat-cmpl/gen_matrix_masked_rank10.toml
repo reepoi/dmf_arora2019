@@ -1,0 +1,3 @@
+n = 100
+gt_path = 'datasets/mat-cmpl/rank10.pt'
+problem = 'matrix-completion'

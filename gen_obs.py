@@ -1,3 +1,4 @@
+from pathlib import Path
 import numpy as np
 import torch
 
@@ -13,10 +14,12 @@ class FLAGS(lz.BaseFLAGS):
 
     @classmethod
     def finalize(cls):
+        mask_rate = 1 - cls.n_train_samples / cls.n**2
+        cls.gt_path = Path(cls.gt_path)
         if cls.problem == 'matrix-sensing':
             cls.obs_path = f'datasets/mat-sensing/{cls.n_train_samples}.pt'
         elif cls.problem == 'matrix-completion':
-            cls.obs_path = f'datasets/mat-cmpl/{cls.n_train_samples}.pt'
+            cls.obs_path = Path('datasets/mat-cmpl') / f'{cls.gt_path.stem}maskrate{mask_rate}.pt'
 
 
 @lz.main(FLAGS)
