@@ -163,7 +163,6 @@ class MatrixCompletion(BaseProblem):
         return (self.ys - self.ys_).pow(2).mean()
 
     def get_test_loss(self, e2e):
-        return (self.matrix - e2e).view(-1).pow(2).mean()
         return vf_model.norm_mean_abs_error(e2e, self.matrix)
 
     @FLAGS.inject
@@ -199,27 +198,34 @@ class MyMatrixCompletion(BaseProblem):
     def get_test_loss(self, e2e):
         return vf_model.norm_mean_abs_error(e2e, self.matrix)
 
-    def get_cvx_opt_constraints(self, x) -> list:
-        pass
-
 
 class ProblemBroker:
     def __init__(self, problem, technique, mask_rate, num_factors, grid_density):
+        mask = None
         if problem is enums.DataSet.DOUBLE_GYRE:
             self.vbt = data.double_gyre()
         elif problem is enums.DataSet.ANEURYSM:
-            self.vbt = data.VelocityByTimeAneurysm.load_from(DMF_VECTOR_FIELDS_DATA_DIR / 'aneurysm' / 'vel_by_time')
-        self.vbt = self.vbt.numpy_to_torch()
+            self.vbt = data.VelocityByTimeAneurysm.from_save(DMF_VECTOR_FIELDS_DATA_DIR / 'aneurysm' / 'vel_by_time')
+        elif problem is enums.DataSet.FUNC1:
+            self.vbt = data.func1()
+        elif problem is enums.DataSet.ARORA2019_5:
+            fp = DMF_VECTOR_FIELDS_DATA_DIR / 'arora2019' / 'rank5.pt'
+            tf = data.MatrixArora2019(time=0, filepath=fp)
+            self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
+            mask = tf.saved_mask('0.8')
+        self.vbt = self.vbt
         self.technique = technique
+        self.mask = mask
+        if self.mask is None:
+            self.mask = vf_model.get_bit_mask(self.problem_shape(), self.mask_rate)
         self.mask_rate = mask_rate
         self.num_factors = num_factors
         self.grid_density = grid_density
 
     def problem_shape(self):
-        if self.technique is enums.Technique.IDENTITY or self.technique is enums.Technique.INTERPOLATED:
+        if self.technique is not enums.Technique.INTERPOLATED:
             return self.vbt.shape_as_completable(interleaved=self.technique is enums.Technique.INTERPOLATED)
-        elif self.technique is enums.Technique.INTERPOLATED:
-            return (self.grid_density,) * 2
+        return (self.grid_density,) * 2
 
     def layers(self):
         rows, cols = self.problem_shape()
@@ -230,34 +236,40 @@ class ProblemBroker:
         return matrix_factor_dimensions
 
     def problems(self):
-        mask = torch.tensor(vf_model.get_bit_mask(self.problem_shape(), self.mask_rate)).to(device)
-        if self.technique is enums.Technique.IDENTITY:
-            return tuple(MyMatrixCompletion(n, a, mask) for n, a in zip(self.vbt.components, self.vbt.vel_by_time_axes))
-        elif self.technique is enums.Technique.INTERLEAVED:
-            vbt = self.vbt.as_completable(interleaved=True)
-            return (MyMatrixCompletion(vbt.components[0], vbt.vel_by_time_axes[0], mask),)
-        elif self.technique is enums.Technique.INTERPOLATED:
-            problems = []
-            for t in self.vbt.timeframes:
-                vf = self.vbt.timeframe(t).vec_field
-                for n, a in zip(vf.components, vf.vel_axes):
-                    problems.append(MyMatrixCompletion(f'{n} (t = {t})', a, mask))
-            return tuple(problems)
+        mask = torch.tensor(self.mask).to(device)
+        vbt = self.vbt.numpy_to_torch().as_completable(interleaved=self.technique is enums.Technique.INTERLEAVED)
+        if self.technique is not enums.Technique.INTERPOLATED:
+            return tuple(MyMatrixCompletion(n, a, mask) for n, a in zip(vbt.components, vbt.vel_by_time_axes))
+        problems = []
+        for t in range(self.vbt.timeframes):
+            vf = self.vbt.timeframe(t).as_completable(self.grid_density).numpy_to_torch().vec_field
+            for n, a in zip(vf.components, vf.vel_axes):
+                problems.append(MyMatrixCompletion(f'{n} (t = {t})', a, mask))
+        return tuple(problems)
 
     def reconstruct_vbt(self, results):
+        coords_torch = self.vbt.timeframe(0).numpy_to_torch().vec_field.coords
         if self.technique is enums.Technique.IDENTITY:
             return self.vbt.__class__(
-                coords=self.vbt.coords,
-                vel_by_time_axes=results
-            )
+                filepath=None,
+                coords=coords_torch,
+                vel_by_time_axes=results,
+                components=data.auto_component_names(len(results))
+            ).torch_to_numpy()
         elif self.technique is enums.Technique.INTERLEAVED:
             dims = len(self.vbt.components)
             return self.vbt.__class__(
-                coords=self.vbt.corods,
-                vel_by_time_axes=tuple(results[0][i::dims] for i in range(dims))
-            )
+                filepath=None,
+                coords=coords_torch,
+                vel_by_time_axes=tuple(results[0][i::dims] for i in range(dims)),
+                components=data.auto_component_names(dims)
+            ).torch_to_numpy()
         elif self.technique is enums.Technique.INTERPOLATED:
-            pass
+            results_numpy = (r.detach().cpu().numpy() for r in results)
+            coords_interp = self.vbt.coords.bounding_grid(self.grid_density)
+            vfs_rec = (data.VectorField(coords=coords_interp, vel_axes=(r,)) for r in results_numpy)
+            vfs_interp = (vf.interp(coords=self.vbt.coords) for vf in vfs_rec)
+            return self.vbt.__class__.from_vec_fields(tuple(vfs_interp))
 
 
 class MatrixSensing(BaseProblem):
@@ -387,19 +399,6 @@ def main(*, depth, hidden_sizes, mask_rate, technique, grid_density, n_iters, pr
                     U, singular_values, V = e2e.svd()  # U D V^T = e2e
                     schatten_norm = singular_values.pow(2. / depth).sum()
 
-                    # d_e2e = p.get_d_e2e(e2e)
-                    # full = U.t().mm(d_e2e).mm(V).abs()  # we only need the magnitude.
-                    # n, m = full.shape
-
-                    # diag = full.diag()
-                    # mask = torch.ones_like(full, dtype=torch.int)
-                    # mask[np.arange(min(n, m)), np.arange(min(n, m))] = 0
-                    # off_diag = full.masked_select(mask > 0)
-                    # _writer.add_scalar('diag/mean', diag.mean().item(), global_step=T)
-                    # _writer.add_scalar('diag/std', diag.std().item(), global_step=T)
-                    # _writer.add_scalar('off_diag/mean', off_diag.mean().item(), global_step=T)
-                    # _writer.add_scalar('off_diag/std', off_diag.std().item(), global_step=T)
-
                     grads = [param.grad.cpu().data.numpy().reshape(-1) for param in model.parameters()]
                     grads = np.concatenate(grads)
                     avg_grads_norm = np.sqrt(np.mean(grads**2))
@@ -433,9 +432,9 @@ def main(*, depth, hidden_sizes, mask_rate, technique, grid_density, n_iters, pr
         results.append(e2e)
 
     if isinstance(prob, ProblemBroker):
-        vbt = prob.vbt.torch_to_numpy()
-        vbt_rec = prob.reconstruct_vbt(results).torch_to_numpy()
-        nmaes = {n: vf_model.norm_mean_abs_error(rec_a, a, lib=np) for n, rec_a, a in zip(vbt.components, vbt.vel_by_time_axes, vbt_rec.vel_by_time_axes)}
+        vbt = prob.vbt
+        vbt_rec = prob.reconstruct_vbt(results)
+        nmaes = {n: vf_model.norm_mean_abs_error(rec_a, a, lib=np) for n, rec_a, a in zip(vbt.components, vbt_rec.vel_by_time_axes, vbt.vel_by_time_axes)}
         vbt_rec.save(lz.fs.log_dir / 'reconstructed', plot_time=0)
 
         _log.info(f'FINAL NMAE: {json.dumps(nmaes)}')
