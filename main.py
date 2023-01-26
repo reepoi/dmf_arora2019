@@ -33,7 +33,7 @@ class FLAGS(lz.BaseFLAGS):
     optimizer = 'GroupRMSprop'
     initialization = 'gaussian'  # `orthogonal` or `identity` or `gaussian`
     lr = 0.01
-    train_thres = 1.e-6
+    train_thres = 1e-7
 
     hidden_sizes = []
 
