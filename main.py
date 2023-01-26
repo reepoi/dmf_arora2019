@@ -1,3 +1,4 @@
+import json
 import numpy as np
 from pathlib import Path
 import torch
@@ -108,7 +109,7 @@ def init_model(model, *, hidden_sizes, initialization, init_scale, _log):
 
 class BaseProblem:
     def __init__(self, name):
-        self.name = ''
+        self.name = name
 
     def get_d_e2e(self, e2e):
         pass
@@ -243,6 +244,21 @@ class ProblemBroker:
                     problems.append(MyMatrixCompletion(f'{n} (t = {t})', a, mask))
             return tuple(problems)
 
+    def reconstruct_vbt(self, results):
+        if self.technique is enums.Technique.IDENTITY:
+            return self.vbt.__class__(
+                coords=self.vbt.coords,
+                vel_by_time_axes=results
+            )
+        elif self.technique is enums.Technique.INTERLEAVED:
+            dims = len(self.vbt.components)
+            return self.vbt.__class__(
+                coords=self.vbt.corods,
+                vel_by_time_axes=tuple(results[0][i::dims] for i in range(dims))
+            )
+        elif self.technique is enums.Technique.INTERPOLATED:
+            pass
+
 
 class MatrixSensing(BaseProblem):
     ys: torch.Tensor
@@ -347,6 +363,7 @@ def main(*, depth, hidden_sizes, mask_rate, technique, grid_density, n_iters, pr
     if isinstance(prob, ProblemBroker):
         problems = prob.problems()
 
+    results = []
     for p in problems:
         _log.info(f'***** BEGIN {problem}: {p.name} *****')
 
@@ -413,6 +430,15 @@ def main(*, depth, hidden_sizes, mask_rate, technique, grid_density, n_iters, pr
 
         _log.info(f"train loss = {loss.item()}. test loss = {test_loss.item()}")
         _log.info(f'***** END {problem}: {p.name} *****')
+        results.append(e2e)
+
+    if isinstance(prob, ProblemBroker):
+        vbt = prob.vbt.torch_to_numpy()
+        vbt_rec = prob.reconstruct_vbt(results).torch_to_numpy()
+        nmaes = {n: vf_model.norm_mean_abs_error(rec_a, a, lib=np) for n, rec_a, a in zip(vbt.components, vbt.vel_by_time_axes, vbt_rec.vel_by_time_axes)}
+        vbt_rec.save(lz.fs.log_dir / 'reconstructed', plot_time=0)
+
+        _log.info(f'FINAL NMAE: {json.dumps(nmaes)}')
 
 
 if __name__ == '__main__':
