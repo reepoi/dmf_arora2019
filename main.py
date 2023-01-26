@@ -213,12 +213,11 @@ class ProblemBroker:
             tf = data.MatrixArora2019(time=0, filepath=fp)
             self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
             mask = tf.saved_mask('0.8')
-        self.vbt = self.vbt
         self.technique = technique
-        self.mask = mask
         self.grid_density = grid_density
         self.mask_rate = mask_rate
         self.num_factors = num_factors
+        self.mask = mask
         if self.mask is None:
             self.mask = vf_model.get_bit_mask(self.problem_shape(), self.mask_rate)
 
@@ -265,11 +264,17 @@ class ProblemBroker:
                 components=data.auto_component_names(dims)
             ).torch_to_numpy()
         elif self.technique is enums.Technique.INTERPOLATED:
-            results_numpy = (r.detach().cpu().numpy() for r in results)
             coords_interp = self.vbt.coords.bounding_grid(self.grid_density)
-            vfs_rec = (data.VectorField(coords=coords_interp, vel_axes=(r,)) for r in results_numpy)
-            vfs_interp = (vf.interp(coords=self.vbt.coords) for vf in vfs_rec)
-            return self.vbt.__class__.from_vec_fields(tuple(vfs_interp))
+            idx = 0
+            vec_fields = []
+            for _ in range(self.vbt.timeframes):
+                vel_axes = []
+                for _ in self.vbt.components:
+                    vel_axes.append(results[idx].detach().cpu().numpy())
+                    idx += 1
+                vec_fields.append(data.VectorField(coords=coords_interp, vel_axes=vel_axes))
+            vfs_interp = tuple(vf.interp(coords=self.vbt.coords) for vf in vec_fields)
+            return self.vbt.__class__.from_vec_fields(vfs_interp)
 
 
 class MatrixSensing(BaseProblem):
