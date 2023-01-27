@@ -213,6 +213,22 @@ class ProblemBroker:
             tf = data.MatrixArora2019(time=0, filepath=fp)
             self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
             mask = tf.saved_mask('0.8')
+        elif problem is enums.DataSet.CAMERAMAN:
+            fp = DMF_VECTOR_FIELDS_DATA_DIR / 'images' / 'cameraman.jpg'
+            tf = data.MatrixImage(time=0, filepath=fp)
+            self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
+        elif problem is enums.DataSet.CHECKERBOARD:
+            fp = DMF_VECTOR_FIELDS_DATA_DIR / 'images' / 'checkerboard.png'
+            tf = data.MatrixImage(time=0, filepath=fp)
+            self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
+        elif problem is enums.DataSet.SKELETON:
+            fp = DMF_VECTOR_FIELDS_DATA_DIR / 'images' / 'skeleton.png'
+            tf = data.MatrixImage(time=0, filepath=fp)
+            self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
+        elif problem is enums.DataSet.FOX:
+            fp = DMF_VECTOR_FIELDS_DATA_DIR / 'images' / 'fox.jpg'
+            tf = data.MatrixImage(time=0, filepath=fp)
+            self.vbt = data.VelocityByTime.from_vec_fields([tf.vec_field])
         self.technique = technique
         self.grid_density = grid_density
         self.mask_rate = mask_rate
